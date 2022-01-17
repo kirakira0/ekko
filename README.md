@@ -12,9 +12,9 @@ stdout <- "Hello, world"
 
 ## Language Specification
 
-### Grammar
+See the file src/syntax/ekko.ohm for the grammar.
 
-See the file src/syntax/echo.ohm for the grammar.
+The language is very much in a rapid design phase right now. A language manual will be coming as soon as the basic ideas start to settle.
 
 ## Building
 
@@ -38,7 +38,6 @@ The `outputType` indicates what you wish to print to standard output:
 
 <table>
 <tr><th>Option</th><th>Description</th></tr>
-<tr><td>tokens</td><td>The tokens</td></tr>
 <tr><td>ast</td><td>The AST</td></tr>
 <tr><td>analyzed</td><td>The decorated AST</td></tr>
 <tr><td>optimized</td><td>The optimized decorated AST</td></tr>
@@ -61,6 +60,6 @@ where the `outputType` argument is as in the previous section.
 
 ## Contributing
 
-We’re happy to take PRs. As usual, be nice when filing issues and contributing. Do remember the idea is to keep the language tiny; if you’d like to extend the language, you’re probably better forking into a new project. However, I would love to see any improvements you might have for the implementation or the pedagogy.
+We’re happy to take PRs. As usual, be nice when filing issues and contributing. We’d love to see any improvements you might have for the language and its implementation.
 
 Make sure to run `npm test` before submitting the PR.
