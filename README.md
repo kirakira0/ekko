@@ -56,7 +56,7 @@ where the `outputType` argument is as in the previous section.
 
 ## Original Authors
 
-@rtoal and @amandacmarques
+@rtoal, @amandacmarques, @kirakira0
 
 ## Contributing
 
