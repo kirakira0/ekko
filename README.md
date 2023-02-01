@@ -1,4 +1,4 @@
-![Logo](https://raw.githubusercontent.com/rtoal/ekko/main/docs/logo.png)
+![Logo](https://raw.githubusercontent.com/rtoal/ekko/main/docs/ekko-logo-2.png)
 
 # Ekko
 
