@@ -1,0 +1,24 @@
+Ekko {
+  Program = Statement*
+  Statement = Assignment | Exp
+  Assignment = id "<" Exp ">" ("+" | "-" | "*" | "%" | "^" | "/")?
+  Exp = FunCall | SingleLineFunDecl | id | digit+ | stringlit
+  
+  
+  FunCall = id "(" ListOf<Exp, ","> ")"
+  
+  SingleLineFunDecl = "func" funcName "(" ListOf<Exp, ","> ")" "->" Statement 
+  
+  
+  stringlit = "\"" char* "\""
+  char = ~"\"" ~"\n" any 
+  space += "#" (~"\n" any)* --pls
+  
+  
+  keyword =  "print" ~idchar | "func" ~idchar
+  idchar = "_" | alnum
+  id  = letter idchar*
+  
+  funcName = ~keyword letter idchar*
+
+}
