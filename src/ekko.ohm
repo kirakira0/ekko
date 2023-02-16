@@ -1,5 +1,5 @@
 Ekko {
-  Program = Statement*
+  Program = Statement+
   Statement = Assignment | Exp
   Assignment = id "<" Exp ">" ("+" | "-" | "*" | "%" | "^" | "/")?
   Exp = FunCall | SingleLineFunDecl | id | digit+ | stringlit
@@ -20,5 +20,5 @@ Ekko {
   id  = letter idchar*
   
   funcName = ~keyword letter idchar*
-
+  space      += "#" (~"\n" any)*   --comment
 }
