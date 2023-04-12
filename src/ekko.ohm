@@ -4,7 +4,6 @@ Ekko {
   Assignment = id "<" Exp ">" ("+" | "-" | "*" | "%" | "^" | "/")?
   Exp = FunCall | SingleLineFunDecl | id | digit+ | stringlit
   
-  
   FunCall = id "(" ListOf<Exp, ","> ")"
   
   SingleLineFunDecl = "func" funcName "(" ListOf<Exp, ","> ")" "->" Statement 

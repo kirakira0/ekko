@@ -13,6 +13,13 @@ const syntaxChecks = [
     print()`,
   ],
   ["func call", `myFunc(1, 3, "hello")`],
+  [
+    "variable assignment overrides",
+    `my_num<1>
+  my_num<3>  # override 
+  my_num<4>- # subtract
+  `,
+  ],
 ];
 
 // Programs with syntax errors that the parser will detect
