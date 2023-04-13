@@ -1,325 +1,720 @@
-import {
-  Variable,
-  Function,
-  error,
-  Type,
-  BinaryExpression,
-  Token,
-  Instruction,
-  LegArray,
-} from "./core.js";
+// ANALYZER
+//
+// The analyze() function takes the grammar match object (the CST) from Ohm
+// and produces a decorated Abstract Syntax "Tree" (technically a graph) that
+// includes all entities including those from the standard library.
 
-import * as stdlib from "./stdlib.js";
+import * as core from "./core.js";
 
-/**
- * All semantic analysis takes place inside of a context. Leg is unique in that, in
- * an attempt to mimick assembly, we only have a single, global context.
- */
+// A few declarations to save typing
+const INT = core.Type.INT;
+const FLOAT = core.Type.FLOAT;
+const STRING = core.Type.STRING;
+const BOOLEAN = core.Type.BOOLEAN;
+const ANY = core.Type.ANY;
+const VOID = core.Type.VOID;
 
-class Context {
-  constructor({ parent = null, functions = new Map(), variables = new Map() }) {
-    Object.assign(this, { parent, functions, variables });
-  }
-  add(name, entity) {
-    // Do not allow shadowing.
-    this.variables.set(name, entity);
-  }
-  lookup(name) {
-    let entity = this.variables.get(name);
-    if (entity !== undefined) return entity;
-    entity = this.parent?.lookup(name);
-    if (entity === undefined || entity === null) {
-      error(`${name} has not been initialized`);
-    }
-    return entity;
-  }
-  analyze(node) {
-    return this[node.constructor.name](node);
-  }
-  Program(p) {
-    this.analyze(p.statements);
-  }
-  PrintStatement(d) {
-    this.analyze(d.argument);
-  }
-  BinaryExpression(e) {
-    this.analyze(e.left);
-    this.analyze(e.right);
-    // Validate operator and operand type compatibility.
-    if (e.left.type === e.right.type) {
-      // Numbers (int, float, bin)
-      if (["int", "float", "bin"].includes(e.left.type)) {
-        if (["+", "-", "*", "/", "^", "%"].includes(e.op))
-          e.resultType = e.left.type; // arithop
-        else if (["<=", "<", "!=", "==", ">=", ">"].includes(e.op))
-          e.resultType = "bool"; // relop
-      }
-      // Strings
-      else if (e.left.type === "str") {
-        if (["+"].includes(e.op)) e.resultType = "str";
-        else if (["!=", "=="].includes(e.op)) e.resultType = "bool";
-        else if (["-", "*", "/", "^", "%", "<=", "<", ">=", ">"].includes(e.op))
-          error("Unsupported operation in BinaryExpression with two strings");
-      }
-      // Bools
-      else if (e.left.type === "bool") {
-        if (["!=", "=="].includes(e.op)) e.resultType = "bool";
-        else if (
-          ["+", "-", "*", "/", "^", "%", "<=", "<", ">=", ">"].includes(e.op)
-        )
-          error("Unsupported operation in BinaryExpression with two bools");
-      }
-    } else {
-      error("Incompatible operands in binary expression");
-    }
-  }
-  VariableDeclaration(d) {
-    let v = new Variable();
-    d.name = d.name.lexeme;
-    // Validate variable has not already been declared.
-    if (this.variables.has(d.name))
-      error(`Variable ${d.name} already declared`);
-    // Type checking unique for arrays ...
-    if (d.initializer.constructor === LegArray) {
-      d.type = d.type.typeName.baseType.typeName.lexeme;
-      d.initializer.contents.forEach((e) => this.analyze(e));
-      let contentValues = [];
-      d.initializer.contents.forEach((e) => {
-        if (e.type !== d.type)
-          error(`Array element ${e.value} does not match array type ${d.type}`);
-        contentValues.push(e.value);
-      });
-      v = new Variable(d.type, contentValues);
-      // ... and for binary expressions.
-    } else if (d.initializer.constructor === BinaryExpression) {
-      this.analyze(d.initializer);
-      d.type = d.type.typeName.lexeme;
-      if (d.initializer.resultType !== d.type)
-        error(
-          "Variable type does not match result of BinaryExpression initializer"
-        );
-    } else {
-      d.type = d.type.typeName.lexeme;
-      this.analyze(d.initializer);
-      // Validate initializer has correct type.
-      if (d.type !== d.initializer.type)
-        error(`Initializer type does not match variable type`);
-      v = new Variable(d.type, d.initializer.value);
-    }
-    this.add(d.name, v);
-  }
-  VariableAssignment(d) {
-    // Ensure LHS has already been initialized.
-    let name = d.name.lexeme;
-    if (!this.variables.has(name)) {
-      // If it has, throw!
-      error(`Must initialize variables before assignment`);
-    }
-  }
-
-  FunctionDeclaration(d) {
-    let funcName = d.funcName.lexeme; // This still has the #. Should we keep it?
-    let suite = d.suite;
-    let func = new Function(funcName, suite);
-    // Make sure function has not already been declared.
-    if (this.functions.has(funcName)) {
-      // If it has, throw!
-      error(`Function ${funcName} already declared`);
-    }
-    // If it has not, add the function being created to the Context's functions.
-    this.functions.set(funcName, func);
-  }
-
-  FunctionCall(d) {
-    // Is the call a branch or a branch link?
-    let link = d.link.lexeme === "bl" ? true : false;
-    let funcName = d.funcName.lexeme;
-    // Make sure the function has been declared.
-    if (!this.functions.has(funcName)) {
-      // If it has, throw!
-      error(`Function ${funcName} has not yet been declared`);
-    }
-    // Check if there is a condition being attatched to the function call.
-    // if (d.condition.length !== 0) {
-    //   d.condition.forEach((c) => {
-    //     // If we have a binary operator.
-    //     if (c.left !== undefined && c.right !== undefined) {
-    //       let be = new BinaryExpression(c.left, c.op, c.right)
-    //     }
-    //   })
-    // }
-  }
-
-  IfStatement(d) {
-    // The condition must evaluate to a boolean.
-    // If the condition is a token, make sure it is an id or a boolean.
-    if (!["Id", "Bool", undefined].includes(d.condition.category)) {
-      error(`If statement condition must evaluate to a boolean`);
-    }
-    // If the token is an id ...
-    if (d.condition.category == "Id") {
-      // ... make sure the variable has been declared ...
-      if (!this.variables.has(d.condition.description)) {
-        error(`Must initialize variables before use in conditional expression`);
-      }
-      // ... and make sure the var is of type bool ...
-      const condition_type = this.variables.get(d.condition.description).type;
-      if (condition_type !== "bool") {
-        error(`If statement condition must evaluate to a boolean`);
-      }
-    }
-  }
-
-  CompareInstruction(d) {
-    this.ValidateInstructionParameterLength(d, 3);
-    if (
-      d.args[1].constructor === LegArray ||
-      d.args[2].constructor === LegArray
-    ) {
-      error("Instructions currently unsupported for LegArrays.");
-    }
-    // If arg_1 already exists, make sure it's a boolean.
-    if (this.variables.has(d.args[0].description)) {
-      if (this.variables.get(d.args[0].description).type !== "bool") {
-        error(
-          `Result of comparison ${d.args[0].description} must be a boolean`
-        );
-      }
-    }
-    // Initializer just stores info about the params and the instruction type
-    // since we won't know the result until runtime.
-    let v = new Variable(
-      "bool",
-      d.args[0].description,
-      new BinaryExpression(d.args[1], "===", d.args[2])
-    );
-    this.variables.set(d.args[0].description, v);
-  }
-
-  AddInstruction(d) {
-    this.ValidateInstructionParameterLength(d, 3);
-    if (
-      d.args[1].constructor === LegArray ||
-      d.args[2].constructor === LegArray
-    ) {
-      error("Instructions currently unsupported for LegArrays.");
-    }
-    // Check types of arguments
-    let arg1Type = this.ValidateArithmeticInstructionArguments(
-      d,
-      Instruction.ADD
-    );
-    // Initializer just stores info about the params and the instruction type
-    // since we won't know the result until runtime.
-    let v = new Variable(
-      arg1Type,
-      d.args[0].description,
-      new BinaryExpression(d.args[1], "+", d.args[2])
-    );
-    this.variables.set(d.args[0].description, v);
-  }
-
-  SubInstruction(d) {
-    this.ValidateInstructionParameterLength(d, 3); // Check length of instruction
-    if (
-      d.args[1].constructor === LegArray ||
-      d.args[2].constructor === LegArray
-    ) {
-      error("Instructions currently unsupported for LegArrays.");
-    }
-    let arg1Type = this.ValidateArithmeticInstructionArguments(
-      d,
-      Instruction.SUB
-    );
-    // Initializer just stores info about the params and the instruction type
-    // since we won't know the result until runtime.
-    let v = new Variable(
-      arg1Type,
-      d.args[0].description,
-      new BinaryExpression(d.args[1], "-", d.args[2])
-    );
-    this.variables.set(d.args[0].description, v);
-  }
-
-  ValidateInstructionParameterLength(d, expectedLength) {
-    if (d.args.length !== expectedLength) {
-      error(`Instruction must have exactly ${expectedLength} arguments.`);
-    }
-    // If either arg_2 or arg_3 are variables, they must be initialized already.
-    d.args.slice(1, expectedLength).forEach((arg) => {
-      if (arg.category === "Id" && !this.variables.has(arg.description)) {
-        error(`Variable ${arg.description} is undeclared`);
-      }
-    });
-  }
-
-  ValidateArithmeticInstructionArguments(d) {
-    // Set arg2 type.
-    let arg2Type;
-    if (this.variables.has(d.args[1].description)) {
-      arg2Type = this.variables.get(d.args[1].description).type;
-    } else if (d.args[1].constructor === Token) {
-      arg2Type = d.args[1].category;
-    } else {
-      arg2Type = d.args[1].constructor.name.toLowerCase();
-    }
-    // Set arg2 type.
-    let arg3Type;
-    if (this.variables.has(d.args[2].description)) {
-      arg3Type = this.variables.get(d.args[2].description).type;
-    } else if (d.args[2].constructor === Token) {
-      arg3Type = d.args[2].category;
-    } else {
-      arg3Type = d.args[2].constructor.name.toLowerCase();
-    }
-    // Types must be the same.
-    if (arg2Type !== arg3Type) {
-      error(`add instruction parameters must be the same type`);
-    }
-    // If arg_1 already exists, make sure it's the same type as arg_2 and arg_3.
-    if (this.variables.has(d.args[0].description)) {
-      if (
-        this.variables.get(d.args[0].description).type !==
-        arg2Type.toLowerCase()
-      ) {
-        error(`Result of instruction must be same type as arguments.`);
-      }
-    }
-    return arg2Type;
-  }
-
-  Token(t) {
-    // For ids being used, not defined
-    if (t.category === "Id") {
-      let v = this.lookup(t.lexeme);
-      t.value = v.value;
-      t.type = v.type;
-    }
-    if (t.category === "Int")
-      [t.value, t.type] = [Number(t.lexeme), Type.INT.typeName];
-    if (t.category === "Float")
-      [t.value, t.type] = [Number(t.lexeme), Type.FLOAT.typeName];
-    if (t.category === "Str")
-      [t.value, t.type] = [t.lexeme, Type.STRING.typeName];
-    if (t.category === "Bool")
-      [t.value, t.type] = [t.lexeme === "true", Type.BOOL.typeName];
-    if (t.category === "Bin") [t.value, t.type] = [t.lexeme, Type.BIN.typeName];
-  }
-
-  Array(a) {
-    a.forEach((e) => this.analyze(e));
+// The single gate for error checking. Pass in a condition that must be true.
+// Use errorLocation to give contextual information about the error that will
+// appear: this should be an object whose "at" property is a parse tree node.
+// Ohm's getLineAndColumnMessage will be used to prefix the error message.
+function must(condition, message, errorLocation) {
+  if (!condition) {
+    const prefix = errorLocation.at.source.getLineAndColumnMessage();
+    throw new Error(`${prefix}${message}`);
   }
 }
 
-// -----------------------
-// Validation Functions
-// -----------------------
-
-export default function analyze(node) {
-  const initialContext = new Context({});
-  for (const [name, type] of Object.entries(stdlib.contents)) {
-    initialContext.add(name, type);
+class Context {
+  constructor({
+    parent = null,
+    locals = new Map(),
+    inLoop = false,
+    function: f = null,
+  }) {
+    Object.assign(this, { parent, locals, inLoop, function: f });
   }
-  initialContext.analyze(node);
-  return node;
+  add(name, entity) {
+    this.locals.set(name, entity);
+  }
+  lookup(name) {
+    return this.locals.get(name) || this.parent?.lookup(name);
+  }
+  newChildContext(props) {
+    return new Context({ ...this, ...props, parent: this, locals: new Map() });
+  }
+}
+
+export default function analyze(match) {
+  let context = new Context({});
+
+  function mustNotAlreadyBeDeclared(name, at) {
+    must(!context.lookup(name), `Identifier ${name} already declared`, at);
+  }
+
+  function mustHaveBeenFound(entity, name, at) {
+    must(entity, `Identifier ${name} not declared`, at);
+  }
+
+  function mustHaveNumericType(e, at) {
+    must([INT, FLOAT].includes(e.type), "Expected a number", at);
+  }
+
+  function mustHaveNumericOrStringType(e, at) {
+    must(
+      [INT, FLOAT, STRING].includes(e.type),
+      "Expected a number or string",
+      at
+    );
+  }
+
+  function mustHaveBooleanType(e, at) {
+    must(e.type === BOOLEAN, "Expected a boolean", at);
+  }
+
+  function mustHaveIntegerType(e, at) {
+    must(e.type === INT, "Expected an integer", at);
+  }
+
+  function mustHaveAnArrayType(e, at) {
+    must(e.type instanceof core.ArrayType, "Expected an array", at);
+  }
+
+  function mustHaveAnOptionalType(e, at) {
+    must(e.type instanceof core.OptionalType, "Expected an optional", at);
+  }
+
+  function mustHaveAStructType(e, at) {
+    must(e.type instanceof core.StructType, "Expected a struct", at);
+  }
+
+  function mustHaveOptionalStructType(e, at) {
+    must(
+      e.type instanceof core.OptionalType &&
+        e.type.baseType instanceof core.StructType,
+      "Expected an optional struct",
+      at
+    );
+  }
+
+  function entityMustBeAType(e, at) {
+    must(e instanceof core.Type, "Type expected", at);
+  }
+
+  function mustBeAnArrayType(t, at) {
+    must(t instanceof core.ArrayType, "Must be an array type", at);
+  }
+
+  function mustBeTheSameType(e1, e2, at) {
+    must(
+      equivalent(e1.type, e2.type),
+      "Operands do not have the same type",
+      at
+    );
+  }
+
+  function mustAllHaveSameType(expressions, at) {
+    // Used to check array elements, for example
+    must(
+      expressions
+        .slice(1)
+        .every((e) => equivalent(e.type, expressions[0].type)),
+      "Not all elements have the same type",
+      at
+    );
+  }
+
+  function includesAsField(structType, type) {
+    // Directly or indirectly!
+    return structType.fields.some(
+      (field) =>
+        field.type === type ||
+        (field.type instanceof core.StructType &&
+          includesAsField(field.type, type))
+    );
+  }
+
+  function mustNotBeSelfContaining(structType, at) {
+    const containsSelf = includesAsField(structType, structType);
+    must(!containsSelf, "Struct type must not be self-containing", at);
+  }
+
+  function equivalent(t1, t2) {
+    return (
+      t1 === t2 ||
+      (t1 instanceof core.OptionalType &&
+        t2 instanceof core.OptionalType &&
+        equivalent(t1.baseType, t2.baseType)) ||
+      (t1 instanceof core.ArrayType &&
+        t2 instanceof core.ArrayType &&
+        equivalent(t1.baseType, t2.baseType)) ||
+      (t1 instanceof core.FunctionType &&
+        t2 instanceof core.FunctionType &&
+        equivalent(t1.returnType, t2.returnType) &&
+        t1.paramTypes.length === t2.paramTypes.length &&
+        t1.paramTypes.every((t, i) => equivalent(t, t2.paramTypes[i])))
+    );
+  }
+
+  function assignable(fromType, toType) {
+    return (
+      toType == ANY ||
+      equivalent(fromType, toType) ||
+      (fromType instanceof core.FunctionType &&
+        toType instanceof core.FunctionType &&
+        // covariant in return types
+        assignable(fromType.returnType, toType.returnType) &&
+        fromType.paramTypes.length === toType.paramTypes.length &&
+        // contravariant in parameter types
+        toType.paramTypes.every((t, i) =>
+          assignable(t, fromType.paramTypes[i])
+        ))
+    );
+  }
+
+  function mustBeAssignable(e, { toType: type }, at) {
+    const message = `Cannot assign a ${e.type.description} to a ${type.description}`;
+    must(assignable(e.type, type), message, at);
+  }
+
+  function mustNotBeReadOnly(e, at) {
+    must(!e.readOnly, `Cannot assign to constant ${e.name}`, at);
+  }
+
+  function mustHaveDistinctFields(type, at) {
+    const fieldNames = new Set(type.fields.map((f) => f.name));
+    must(fieldNames.size === type.fields.length, "Fields must be distinct", at);
+  }
+
+  function memberMustBeDeclared(structType, field, at) {
+    must(
+      structType.fields.map((f) => f.name).includes(field),
+      "No such field",
+      at
+    );
+  }
+
+  function mustBeInLoop(at) {
+    must(context.inLoop, "Break can only appear in a loop", at);
+  }
+
+  function mustBeInAFunction(at) {
+    must(context.function, "Return can only appear in a function", at);
+  }
+
+  function mustBeCallable(e, at) {
+    const callable =
+      e instanceof core.StructType || e.type instanceof core.FunctionType;
+    must(callable, "Call of non-function or non-constructor", at);
+  }
+
+  function mustNotReturnAnything(f, at) {
+    must(f.type.returnType === VOID, "Something should be returned", at);
+  }
+
+  function mustReturnSomething(f, at) {
+    must(
+      f.type.returnType !== VOID,
+      "Cannot return a value from this function",
+      at
+    );
+  }
+
+  function mustBeReturnable(e, { from: f }, at) {
+    mustBeAssignable(e, { toType: f.type.returnType }, at);
+  }
+
+  function mustHaveRightNumberOfArguments(argCount, paramCount, at) {
+    const message = `${paramCount} argument(s) required but ${argCount} passed`;
+    must(argCount === paramCount, message, at);
+  }
+
+  const analyzer = match.matcher.grammar.createSemantics().addOperation("rep", {
+    Program(statements) {
+      return new core.Program(statements.children.map((s) => s.rep()));
+    },
+
+    // VariableAssignment = ("-")? id ("<" Exp ">")? ("+" | "-" | "*" | "%" | "^" | "/")?
+    VariableAssignment(historical, id, left, value, right, modifier) {
+      historical = !!historical.sourceString;
+      value = value.sourceString.substring(1, value.sourceString.length - 1);
+      // console.log(modifier);
+      // console.log(left);
+      // console.log(value);
+      // console.log(right);
+      // console.log(modifier);
+      if (!!modifier) {
+        return new core.VariableAssignment(
+          historical,
+          id.sourceString,
+          value,
+          modifier.sourceString
+        );
+      } else {
+        return new core.VariableAssignment(historical, id.sourceString, value);
+      }
+    },
+
+    /*
+    VarDecl(modifier, id, _eq, exp, _semicolon) {
+      const initializer = exp.rep();
+      const readOnly = modifier.sourceString === "const";
+      const variable = new core.Variable(
+        id.sourceString,
+        readOnly,
+        initializer.type
+      );
+      mustNotAlreadyBeDeclared(id.sourceString, { at: id });
+      context.add(id.sourceString, variable);
+      return new core.VariableDeclaration(variable, initializer);
+    },
+
+    TypeDecl(_struct, id, _left, fields, _right) {
+      // To allow recursion, enter into context without any fields yet
+      const type = new core.StructType(id.sourceString, []);
+      mustNotAlreadyBeDeclared(id.sourceString, { at: id });
+      context.add(id.sourceString, type);
+      // Now add the types as you parse and analyze. Since we already added
+      // the struct type itself into the context, we can use it in fields.
+      type.fields = fields.children.map((field) => field.rep());
+      mustHaveDistinctFields(type, { at: id });
+      mustNotBeSelfContaining(type, { at: id });
+      return new core.TypeDeclaration(type);
+    },
+
+    Field(id, _colon, type) {
+      return new core.Field(id.sourceString, type.rep());
+    },
+
+    FunDecl(_fun, id, parameters, _colons, type, block) {
+      // Start by making the function, but we don't yet know its type.
+      // Also add it to the context so that we can have recursion.
+      const fun = new core.Function(id.sourceString);
+      mustNotAlreadyBeDeclared(id.sourceString, { at: id });
+      context.add(id.sourceString, fun);
+
+      // Parameters are part of the child context
+      context = context.newChildContext({ inLoop: false, function: fun });
+      const params = parameters.rep();
+
+      // Now that the parameters are known, we compute the function's type.
+      // This is fine; we did not need the type to analyze the parameters,
+      // but we do need to set it before analyzing the body.
+      const paramTypes = params.map((param) => param.type);
+      const returnType = type.children?.[0]?.rep() ?? VOID;
+      fun.type = new core.FunctionType(paramTypes, returnType);
+
+      // Analyze body while still in child context
+      const body = block.rep();
+      context = context.parent;
+      return new core.FunctionDeclaration(id.sourceString, fun, params, body);
+    },
+
+    Params(_open, paramList, _close) {
+      return paramList.asIteration().children.map((p) => p.rep());
+    },
+
+    Param(id, _colon, type) {
+      const param = new core.Variable(id.sourceString, false, type.rep());
+      mustNotAlreadyBeDeclared(param.name, { at: id });
+      context.add(param.name, param);
+      return param;
+    },
+
+    Type_optional(baseType, _questionMark) {
+      return new core.OptionalType(baseType.rep());
+    },
+
+    Type_array(_left, baseType, _right) {
+      return new core.ArrayType(baseType.rep());
+    },
+
+    Type_function(_left, types, _right, _arrow, type) {
+      const paramTypes = types.asIteration().children.map((t) => t.rep());
+      const returnType = type.rep();
+      return new core.FunctionType(paramTypes, returnType);
+    },
+
+    Type_id(id) {
+      const entity = context.lookup(id.sourceString);
+      mustHaveBeenFound(entity, id.sourceString, { at: id });
+      entityMustBeAType(entity, { at: id });
+      return entity;
+    },
+
+    Statement_bump(exp, operator, _semicolon) {
+      const variable = exp.rep();
+      mustHaveIntegerType(variable, { at: exp });
+      return operator.sourceString === "++"
+        ? new core.Increment(variable)
+        : new core.Decrement(variable);
+    },
+
+    Statement_assign(variable, _eq, expression, _semicolon) {
+      const source = expression.rep();
+      const target = variable.rep();
+      mustBeAssignable(source, { toType: target.type }, { at: variable });
+      mustNotBeReadOnly(target, { at: variable });
+      return new core.Assignment(target, source);
+    },
+
+    Statement_call(call, _semicolon) {
+      return call.rep();
+    },
+
+    Statement_break(breakKeyword, _semicolon) {
+      mustBeInLoop({ at: breakKeyword });
+      return new core.BreakStatement();
+    },
+
+    Statement_return(returnKeyword, exp, _semicolon) {
+      mustBeInAFunction({ at: returnKeyword });
+      mustReturnSomething(context.function, { at: returnKeyword });
+      const returnExpression = exp.rep();
+      mustBeReturnable(
+        returnExpression,
+        { from: context.function },
+        { at: exp }
+      );
+      return new core.ReturnStatement(returnExpression);
+    },
+
+    Statement_shortreturn(returnKeyword, _semicolon) {
+      mustBeInAFunction({ at: returnKeyword });
+      mustNotReturnAnything(context.function, { at: returnKeyword });
+      return new core.ShortReturnStatement();
+    },
+
+    IfStmt_long(_if, exp, block1, _else, block2) {
+      const test = exp.rep();
+      mustHaveBooleanType(test, { at: exp });
+      context = context.newChildContext();
+      const consequent = block1.rep();
+      context = context.parent;
+      context = context.newChildContext();
+      const alternate = block2.rep();
+      context = context.parent;
+      return new core.IfStatement(test, consequent, alternate);
+    },
+
+    IfStmt_elsif(_if, exp, block, _else, trailingIfStatement) {
+      const test = exp.rep();
+      mustHaveBooleanType(test, { at: exp });
+      context = context.newChildContext();
+      const consequent = block.rep();
+      // Do NOT make a new context for the alternate!
+      const alternate = trailingIfStatement.rep();
+      return new core.IfStatement(test, consequent, alternate);
+    },
+
+    IfStmt_short(_if, exp, block) {
+      const test = exp.rep();
+      mustHaveBooleanType(test, { at: exp });
+      context = context.newChildContext();
+      const consequent = block.rep();
+      context = context.parent;
+      return new core.ShortIfStatement(test, consequent);
+    },
+
+    LoopStmt_while(_while, exp, block) {
+      const test = exp.rep();
+      mustHaveBooleanType(test, { at: exp });
+      context = context.newChildContext({ inLoop: true });
+      const body = block.rep();
+      context = context.parent;
+      return new core.WhileStatement(test, body);
+    },
+
+    LoopStmt_repeat(_repeat, exp, block) {
+      const count = exp.rep();
+      mustHaveIntegerType(count, { at: exp });
+      context = context.newChildContext({ inLoop: true });
+      const body = block.rep();
+      context = context.parent;
+      return new core.RepeatStatement(count, body);
+    },
+
+    LoopStmt_range(_for, id, _in, exp1, op, exp2, block) {
+      const [low, high] = [exp1.rep(), exp2.rep()];
+      mustHaveIntegerType(low, { at: exp1 });
+      mustHaveIntegerType(high, { at: exp2 });
+      const iterator = new core.Variable(id.sourceString, INT, true);
+      context = context.newChildContext({ inLoop: true });
+      context.add(id.sourceString, iterator);
+      const body = block.rep();
+      context = context.parent;
+      return new core.ForRangeStatement(
+        iterator,
+        low,
+        op.sourceString,
+        high,
+        body
+      );
+    },
+
+    LoopStmt_collection(_for, id, _in, exp, block) {
+      const collection = exp.rep();
+      mustHaveAnArrayType(collection, { at: exp });
+      const iterator = new core.Variable(
+        id.sourceString,
+        true,
+        collection.type.baseType
+      );
+      context = context.newChildContext({ inLoop: true });
+      context.add(iterator.name, iterator);
+      const body = block.rep();
+      context = context.parent;
+      return new core.ForStatement(iterator, collection, body);
+    },
+
+    Block(_open, statements, _close) {
+      // No need for a block node, just return the list of statements
+      return statements.children.map((s) => s.rep());
+    },
+
+    Exp_conditional(exp, _questionMark, exp1, colon, exp2) {
+      const test = exp.rep();
+      mustHaveBooleanType(test, { at: exp });
+      const [consequent, alternate] = [exp1.rep(), exp2.rep()];
+      mustBeTheSameType(consequent, alternate, { at: colon });
+      return new core.Conditional(test, consequent, alternate);
+    },
+
+    Exp1_unwrapelse(exp1, elseOp, exp2) {
+      const [optional, op, alternate] = [
+        exp1.rep(),
+        elseOp.sourceString,
+        exp2.rep(),
+      ];
+      mustHaveAnOptionalType(optional, { at: exp1 });
+      mustBeAssignable(
+        alternate,
+        { toType: optional.type.baseType },
+        { at: exp2 }
+      );
+      return new core.BinaryExpression(op, optional, alternate, optional.type);
+    },
+
+    Exp2_or(exp, orOps, exps) {
+      let left = exp.rep();
+      mustHaveBooleanType(left, { at: exp });
+      for (let [i, e] of exps.children.entries()) {
+        let [op, right] = [orOps.children[i].sourceString, e.rep()];
+        mustHaveBooleanType(right, { at: e });
+        left = new core.BinaryExpression(op, left, right, BOOLEAN);
+      }
+      return left;
+    },
+
+    Exp2_and(exp, andOps, exps) {
+      let left = exp.rep();
+      mustHaveBooleanType(left, { at: exp });
+      for (let [i, e] of exps.children.entries()) {
+        let [op, right] = [andOps.children[i].sourceString, e.rep()];
+        mustHaveBooleanType(right, { at: e });
+        left = new core.BinaryExpression(op, left, right, BOOLEAN);
+      }
+      return left;
+    },
+
+    Exp3_bitor(exp, orOps, exps) {
+      let left = exp.rep();
+      mustHaveIntegerType(left, { at: exp });
+      for (let [i, e] of exps.children.entries()) {
+        let [op, right] = [orOps.children[i].sourceString, e.rep()];
+        mustHaveIntegerType(right, { at: e });
+        left = new core.BinaryExpression(op, left, right, INT);
+      }
+      return left;
+    },
+
+    Exp3_bitxor(exp, xorOps, exps) {
+      let left = exp.rep();
+      mustHaveIntegerType(left, { at: exp });
+      for (let [i, e] of exps.children.entries()) {
+        let [op, right] = [xorOps.children[i].sourceString, e.rep()];
+        mustHaveIntegerType(right, { at: e });
+        left = new core.BinaryExpression(op, left, right, INT);
+      }
+      return left;
+    },
+
+    Exp3_bitand(exp, andOps, exps) {
+      let left = exp.rep();
+      mustHaveIntegerType(left, { at: exp });
+      for (let [i, e] of exps.children.entries()) {
+        let [op, right] = [andOps.children[i].sourceString, e.rep()];
+        mustHaveIntegerType(right, { at: e });
+        left = new core.BinaryExpression(op, left, right, INT);
+      }
+      return left;
+    },
+
+    Exp4_compare(exp1, relop, exp2) {
+      const [left, op, right] = [exp1.rep(), relop.sourceString, exp2.rep()];
+      // == and != can have any operand types as long as they are the same
+      // But inequality operators can only be applied to numbers and strings
+      if (["<", "<=", ">", ">="].includes(op)) {
+        mustHaveNumericOrStringType(left, { at: exp1 });
+      }
+      mustBeTheSameType(left, right, { at: relop });
+      return new core.BinaryExpression(op, left, right, BOOLEAN);
+    },
+
+    Exp5_shift(exp1, shiftOp, exp2) {
+      const [left, op, right] = [exp1.rep(), shiftOp.sourceString, exp2.rep()];
+      mustHaveIntegerType(left, { at: exp1 });
+      mustHaveIntegerType(right, { at: exp2 });
+      return new core.BinaryExpression(op, left, right, INT);
+    },
+
+    Exp6_add(exp1, addOp, exp2) {
+      const [left, op, right] = [exp1.rep(), addOp.sourceString, exp2.rep()];
+      if (op === "+") {
+        mustHaveNumericOrStringType(left, { at: exp1 });
+      } else {
+        mustHaveNumericType(left, { at: exp1 });
+      }
+      mustBeTheSameType(left, right, { at: addOp });
+      return new core.BinaryExpression(op, left, right, left.type);
+    },
+
+    Exp7_multiply(exp1, mulOp, exp2) {
+      const [left, op, right] = [exp1.rep(), mulOp.sourceString, exp2.rep()];
+      mustHaveNumericType(left, { at: exp1 });
+      mustBeTheSameType(left, right, { at: mulOp });
+      return new core.BinaryExpression(op, left, right, left.type);
+    },
+
+    Exp8_power(exp1, powerOp, exp2) {
+      const [left, op, right] = [exp1.rep(), powerOp.sourceString, exp2.rep()];
+      mustHaveNumericType(left, { at: exp1 });
+      mustBeTheSameType(left, right, { at: powerOp });
+      return new core.BinaryExpression(op, left, right, left.type);
+    },
+
+    Exp8_unary(unaryOp, exp) {
+      const [op, operand] = [unaryOp.sourceString, exp.rep()];
+      let type;
+      if (op === "#") {
+        mustHaveAnArrayType(operand, { at: exp });
+        type = INT;
+      } else if (op === "-") {
+        mustHaveNumericType(operand, { at: exp });
+        type = operand.type;
+      } else if (op === "!") {
+        mustHaveBooleanType(operand, { at: exp });
+        type = BOOLEAN;
+      } else if (op === "some") {
+        type = new core.OptionalType(operand.type);
+      } else if (op === "random") {
+        mustHaveAnArrayType(operand, { at: exp });
+        type = operand.type.baseType;
+      }
+      return new core.UnaryExpression(op, operand, type);
+    },
+
+    Exp9_emptyarray(ty, _open, _close) {
+      const type = ty.rep();
+      mustBeAnArrayType(type, { at: ty });
+      return new core.EmptyArray(type);
+    },
+
+    Exp9_arrayexp(_open, args, _close) {
+      const elements = args.asIteration().children.map((e) => e.rep());
+      mustAllHaveSameType(elements, { at: args });
+      return new core.ArrayExpression(elements);
+    },
+
+    Exp9_emptyopt(_no, type) {
+      return new core.EmptyOptional(type.rep());
+    },
+
+    Exp9_parens(_open, expression, _close) {
+      return expression.rep();
+    },
+
+    Exp9_subscript(exp1, _open, exp2, _close) {
+      const [array, subscript] = [exp1.rep(), exp2.rep()];
+      mustHaveAnArrayType(array, { at: exp1 });
+      mustHaveIntegerType(subscript, { at: exp2 });
+      return new core.SubscriptExpression(array, subscript);
+    },
+
+    Exp9_member(exp, dot, id) {
+      const object = exp.rep();
+      let structType;
+      if (dot.sourceString === "?.") {
+        mustHaveOptionalStructType(object, { at: exp });
+        structType = object.type.baseType;
+      } else {
+        mustHaveAStructType(object, { at: exp });
+        structType = object.type;
+      }
+      memberMustBeDeclared(structType, id.sourceString, { at: id });
+      const field = structType.fields.find((f) => f.name === id.sourceString);
+      return new core.MemberExpression(object, dot.sourceString, field);
+    },
+
+    Exp9_call(exp, open, expList, _close) {
+      const callee = exp.rep();
+      mustBeCallable(callee, { at: exp });
+      const exps = expList.asIteration().children;
+      const targetTypes =
+        callee instanceof core.StructType
+          ? callee.fields.map((f) => f.type)
+          : callee.type.paramTypes;
+      mustHaveRightNumberOfArguments(exps.length, targetTypes.length, {
+        at: open,
+      });
+      const args = exps.map((exp, i) => {
+        const arg = exp.rep();
+        mustBeAssignable(arg, { toType: targetTypes[i] }, { at: exp });
+        return arg;
+      });
+      return callee instanceof core.StructType
+        ? new core.ConstructorCall(callee, args, callee)
+        : new core.FunctionCall(callee, args, callee.type.returnType);
+    },
+
+    Exp9_id(id) {
+      // When an id appears in an expression, it had better have been declared
+      const entity = context.lookup(id.sourceString);
+      mustHaveBeenFound(entity, id.sourceString, { at: id });
+      return entity;
+    },
+
+    true(_) {
+      return true;
+    },
+
+    false(_) {
+      return false;
+    },
+
+    intlit(_digits) {
+      // Carlos ints will be represented as plain JS bigints
+      return BigInt(this.sourceString);
+    },
+
+    floatlit(_whole, _point, _fraction, _e, _sign, _exponent) {
+      // Carlos floats will be represented as plain JS numbers
+      return Number(this.sourceString);
+    },
+
+    stringlit(_openQuote, _chars, _closeQuote) {
+      // Carlos strings will be represented as plain JS strings, including
+      // the quotation marks
+      return this.sourceString;
+    },
+  */
+  });
+
+  // Analysis starts here. First load up the initial context with entities
+  // from the standard library. Then do the analysis using the semantics
+  // object created above.
+  for (const [name, type] of Object.entries(core.standardLibrary)) {
+    context.add(name, type);
+  }
+  return analyzer(match).rep();
 }

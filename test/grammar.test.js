@@ -4,15 +4,16 @@ import ohm from "ohm-js";
 
 // Programs expected to be syntactically correct
 const syntaxChecks = [
-  ["single line func", "func square(n) -> n<n>*"],
-  ["comments", "func square(n) -> n<n>* # Single line fundecl"],
+  // ["single line func", "func square(n) -> n<n>*"],
+  // ["comments", "func square(n) -> n<n>* # Single line fundecl"],
   ["variable assignment", "name<Vi> # Variable assignment"],
-  [
-    "print statements",
-    `print("Oh the misery, everybody wants to be my enemy")
-    print()`,
-  ],
-  ["func call", `myFunc(1, 3, "hello")`],
+  ["historic variable assignment", "-my_var<0>"],
+  // [
+  //   "print statements",
+  //   `print("Oh the misery, everybody wants to be my enemy")
+  //   print()`,
+  // ],
+  // ["func call", `myFunc(1, 3, "hello")`],
   [
     "variable assignment overrides",
     `my_num<1>
@@ -20,10 +21,24 @@ const syntaxChecks = [
   my_num<4>- # subtract
   `,
   ],
+  ["simple loop declaration", "iter loop range[0,10]{}"],
+  [
+    "dot operators",
+    `
+    -counter<0>
+    iter loop range[0,10] {
+        counter<iter.index>
+    } 
+    `,
+  ],
+  // ["this shouldnt work", `-name<"Kira">hi`],
 ];
 
 // Programs with syntax errors that the parser will detect
-const syntaxErrors = [["empty programs", "", /Line 1, col 1:/]];
+const syntaxErrors = [
+  ["empty programs", "", /Line 1, col 1:/],
+  ["extra junk after statements", `-name<"Kira">hi`, /Line 1, col 16:/],
+];
 
 describe("The grammar", () => {
   const grammar = ohm.grammar(fs.readFileSync("src/ekko.ohm"));

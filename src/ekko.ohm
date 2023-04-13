@@ -1,23 +1,38 @@
 Ekko {
   Program = Statement+
-  Statement = Assignment | Exp
-  Assignment = id "<" Exp ">" ("+" | "-" | "*" | "%" | "^" | "/")?
-  Exp = FunCall | SingleLineFunDecl | id | digit+ | stringlit
+  Statement =  LoopStmt
+            | VariableAssignment
+
+  Exp = | FunCall 
+  		| SingleLineFunDecl 
+  		| MemberAccess 
+  		| id 
+  		| digit+ 
+  		| stringlit
+        
+  VariableAssignment = ("-")? id "<" Exp? ">" ("+" | "-" | "*" | "%" | "^" | "/")?
+
   
   FunCall = id "(" ListOf<Exp, ","> ")"
   
+  LoopStmt = ("iter ")? "loop " (range) "{" Statement* "}"
+  
   SingleLineFunDecl = "func" funcName "(" ListOf<Exp, ","> ")" "->" Statement 
   
+  MemberAccess = Exp "." id
   
   stringlit = "\"" char* "\""
   char = ~"\"" ~"\n" any 
   space += "#" (~"\n" any)* --pls
   
+  range = "range" ("[" intlit "," intlit "]")
   
   keyword =  "print" ~idchar | "func" ~idchar
   idchar = "_" | alnum
   id  = letter idchar*
   
+  intlit = digit+
+  
   funcName = ~keyword letter idchar*
-  space      += "#" (~"\n" any)*   --comment
+  space += "#" (~"\n" any)*   --comment
 }

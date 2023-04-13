@@ -1,0 +1,4 @@
+-counter<0>
+iter loop range[0,10] {
+    counter<iter.index>
+}
