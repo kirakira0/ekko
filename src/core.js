@@ -11,6 +11,12 @@ export class VariableAssignment {
   }
 }
 
+export class PrintStatement {
+  constructor(value) {
+    Object.assign(this, { value });
+  }
+}
+
 // -------
 // -------
 // -------

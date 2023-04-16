@@ -2,8 +2,9 @@ Ekko {
   Program = Statement+
   Statement =  LoopStmt
             | VariableAssignment
+            | PrintStatement
 
-  Exp = | FunCall 
+  Exp = FunCall 
   		| SingleLineFunDecl 
   		| MemberAccess 
   		| id 
@@ -11,6 +12,7 @@ Ekko {
   		| stringlit
         
   VariableAssignment = ("-")? id "<" Exp? ">" ("+" | "-" | "*" | "%" | "^" | "/")?
+  PrintStatement = "print(" stringlit ")"
 
   
   FunCall = id "(" ListOf<Exp, ","> ")"

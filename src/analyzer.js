@@ -237,22 +237,36 @@ export default function analyze(match) {
     // VariableAssignment = ("-")? id ("<" Exp ">")? ("+" | "-" | "*" | "%" | "^" | "/")?
     VariableAssignment(historical, id, left, value, right, modifier) {
       historical = !!historical.sourceString;
-      value = value.sourceString.substring(1, value.sourceString.length - 1);
-      // console.log(modifier);
-      // console.log(left);
-      // console.log(value);
-      // console.log(right);
-      // console.log(modifier);
       if (!!modifier) {
         return new core.VariableAssignment(
           historical,
           id.sourceString,
-          value,
+          value.sourceString,
           modifier.sourceString
         );
       } else {
-        return new core.VariableAssignment(historical, id.sourceString, value);
+        return new core.VariableAssignment(
+          historical,
+          id.sourceString,
+          value.sourceString
+        );
       }
+    },
+
+    PrintStatement(_print, value, _close) {
+      // console.log(value);
+      // console.log(analyze(value.sourceString));
+      // console.log(value.sourceString);
+      // console.log(typeof value);
+      let toPrint = "";
+      if (value._node.ruleName == "stringlit") {
+        toPrint = value.sourceString;
+      }
+      return new core.PrintStatement(toPrint);
+    },
+
+    stringlit(_openQuote, _chars, _closeQuote) {
+      return this.sourceString;
     },
 
     /*
@@ -701,13 +715,7 @@ export default function analyze(match) {
       // Carlos floats will be represented as plain JS numbers
       return Number(this.sourceString);
     },
-
-    stringlit(_openQuote, _chars, _closeQuote) {
-      // Carlos strings will be represented as plain JS strings, including
-      // the quotation marks
-      return this.sourceString;
-    },
-  */
+    */
   });
 
   // Analysis starts here. First load up the initial context with entities
