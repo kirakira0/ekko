@@ -3,6 +3,11 @@
 // INVOKE GENERATE(PROGRAM) WITH THE PROGRAM NODE TO GET BACK THE LLVM IR
 
 import fs from "fs";
+import File from "file-class";
+
+const file = new File(["output"], "output.ll", {
+  type: "text/plain",
+});
 
 // import { Printer } from "./code.js";
 
@@ -72,6 +77,7 @@ import { IfStatement, Type, standardLibrary } from "./core.js";
 
 export default function generate(program) {
   const output = [];
+  const filePath = "output.ll";
 
   const standardFunctions = new Map([
     [standardLibrary.print, (x) => `console.log(${x})`],
@@ -107,6 +113,30 @@ export default function generate(program) {
     Program(p) {
       gen(p.statements);
     },
+    // -------
+    PrintStatement(p) {
+      // TODO: Escape ALL special characters in the string
+      const nullTerminatedString = `"${p.value}\\00"`; // Append null terminator
+      const length = p.value.length + 1;
+      const llvmIR = `
+        @.str = private unnamed_addr constant [${length} x i8] c${nullTerminatedString}
+      
+        declare i32 @puts(i8*)
+      
+        define i32 @main() {
+          %1 = getelementptr [${length} x i8], [${length} x i8]* @.str, i32 0, i32 0
+          call i32 @puts(i8* %1)
+          ret i32 0
+        }
+      `;
+      // Write to the file
+      fs.writeFile(filePath, llvmIR, (err) => {
+        if (err) {
+          console.error("Failed to write to file:", err);
+        }
+      });
+    },
+    // --------
     VariableDeclaration(d) {
       // We don't care about const vs. let in the generated code! The analyzer has
       // already checked that we never updated a const, so let is always fine.

@@ -254,13 +254,12 @@ export default function analyze(match) {
     },
 
     PrintStatement(_print, value, _close) {
-      // console.log(value);
-      // console.log(analyze(value.sourceString));
-      // console.log(value.sourceString);
-      // console.log(typeof value);
       let toPrint = "";
       if (value._node.ruleName == "stringlit") {
-        toPrint = value.sourceString;
+        toPrint = value.sourceString.substring(
+          1,
+          value.sourceString.length - 1
+        );
       }
       return new core.PrintStatement(toPrint);
     },
