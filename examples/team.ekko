@@ -1,0 +1,11 @@
+string[] characters<["Vi", "Jinx", "Caitlyn"]>
+int team_size<0>
+
+iter loop characters {
+    print(iter.data)
+    print(iter.index)
+    team_size<1>+ #Increment variable by 1
+}
+
+
+

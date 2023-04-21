@@ -6,8 +6,8 @@ export class Program {
 }
 
 export class VariableAssignment {
-  constructor(historical, id, value, modifier) {
-    Object.assign(this, { historical, id, value, modifier });
+  constructor(id, _equals, value) {
+    Object.assign(this, { id, _equals, value });
   }
 }
 

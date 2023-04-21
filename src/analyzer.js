@@ -235,7 +235,7 @@ export default function analyze(match) {
     },
 
     // VariableAssignment = ("-")? id ("<" Exp ">")? ("+" | "-" | "*" | "%" | "^" | "/")?
-    VariableAssignment(historical, id, left, value, right, modifier) {
+    VariableAssignment(id, _equals, value) {
       historical = !!historical.sourceString;
       if (!!modifier) {
         return new core.VariableAssignment(
@@ -253,22 +253,30 @@ export default function analyze(match) {
       }
     },
 
-    PrintStatement(_print, value, _close) {
-      let toPrint = "";
-      if (value._node.ruleName == "stringlit") {
-        toPrint = value.sourceString.substring(
-          1,
-          value.sourceString.length - 1
-        );
-      }
+    PrintStatement(_print, _open, value, _close) {
+      let toPrint = value.rep();
       return new core.PrintStatement(toPrint);
     },
+
+    // Literal(type) {
+    //   console.log("HELLO");
+    // },
 
     stringlit(_openQuote, _chars, _closeQuote) {
       return this.sourceString;
     },
+  });
 
-    /*
+  // Analysis starts here. First load up the initial context with entities
+  // from the standard library. Then do the analysis using the semantics
+  // object created above.
+  for (const [name, type] of Object.entries(core.standardLibrary)) {
+    context.add(name, type);
+  }
+  return analyzer(match).rep();
+}
+
+/*
     VarDecl(modifier, id, _eq, exp, _semicolon) {
       const initializer = exp.rep();
       const readOnly = modifier.sourceString === "const";
@@ -715,13 +723,3 @@ export default function analyze(match) {
       return Number(this.sourceString);
     },
     */
-  });
-
-  // Analysis starts here. First load up the initial context with entities
-  // from the standard library. Then do the analysis using the semantics
-  // object created above.
-  for (const [name, type] of Object.entries(core.standardLibrary)) {
-    context.add(name, type);
-  }
-  return analyzer(match).rep();
-}

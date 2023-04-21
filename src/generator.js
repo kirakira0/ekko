@@ -115,9 +115,14 @@ export default function generate(program) {
     },
     // -------
     PrintStatement(p) {
-      // TODO: Escape ALL special characters in the string
-      const nullTerminatedString = `"${p.value}\\00"`; // Append null terminator
-      const length = p.value.length + 1;
+      let value = "";
+      // Remove beginning and end "s if p.value is a stringlit.
+      if (typeof p.value === "string") {
+        value = p.value.substring(1, p.value.length - 1);
+      }
+
+      const nullTerminatedString = `"${value}\\00"`; // Append null terminator
+      const length = value.length + 1;
       const llvmIR = `
         @.str = private unnamed_addr constant [${length} x i8] c${nullTerminatedString}
       
@@ -129,7 +134,7 @@ export default function generate(program) {
           ret i32 0
         }
       `;
-      // Write to the file
+      // Write to the output file.
       fs.writeFile(filePath, llvmIR, (err) => {
         if (err) {
           console.error("Failed to write to file:", err);
